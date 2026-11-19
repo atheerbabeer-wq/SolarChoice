@@ -1331,18 +1331,29 @@ function troughGeom(L,w,f,n){
  const g=new THREE.BufferGeometry();
  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));g.setIndex(idx);return g;
 }
+/* energy flows: a coloured pipe along the path (always visible) plus round dots that move with the power */
+let _dotTex=null;
+function dotTexture(){if(_dotTex)return _dotTex;const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d');
+ x.beginPath();x.arc(32,32,27,0,6.2832);x.fillStyle='#ffffff';x.fill();x.lineWidth=6;x.strokeStyle='#5a5a5a';x.stroke();
+ _dotTex=new THREE.CanvasTexture(c);return _dotTex;}
 function makeFlow(pts,n,color,size){
  const cum=[0];for(let i=1;i<pts.length;i++){const a=pts[i],b=pts[i-1];cum.push(cum[i-1]+Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]));}
  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(n*3),3));
- const m=new THREE.PointsMaterial({color,size,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending});
- const o=new THREE.Points(g,m);o.frustumCulled=false;o.userData={pts,cum,total:cum[cum.length-1],n,off:0};return o;
+ const m=new THREE.PointsMaterial({color,size:size*1.6,map:dotTexture(),transparent:true,alphaTest:0.3,opacity:0,depthWrite:false});
+ const o=new THREE.Points(g,m);o.frustumCulled=false;o.renderOrder=2;
+ const tm=new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:0.25,roughness:0.5,transparent:true,opacity:0.35});
+ for(let i=1;i<pts.length;i++){const a=pts[i-1],b=pts[i],L=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);if(L<1e-3)continue;
+  const s=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,L,8),tm);s.position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
+  s.lookAt(b[0],b[1],b[2]);s.rotateX(Math.PI/2);o.add(s);}
+ o.userData={pts,cum,total:cum[cum.length-1],n,off:0,track:tm};return o;
 }
 function stepFlow(o,dt,speed){
  const u=o.userData;u.off=(u.off+dt*speed)%u.total;const a=o.geometry.attributes.position.array;
  for(let k=0;k<u.n;k++){const s=(u.off+k*u.total/u.n)%u.total;let j=1;while(j<u.cum.length-1&&u.cum[j]<s)j++;
   const t=(s-u.cum[j-1])/((u.cum[j]-u.cum[j-1])||1),p=u.pts[j-1],q=u.pts[j];
   a[k*3]=p[0]+(q[0]-p[0])*t;a[k*3+1]=p[1]+(q[1]-p[1])*t;a[k*3+2]=p[2]+(q[2]-p[2])*t;}
- o.geometry.attributes.position.needsUpdate=true;o.material.opacity=speed>0.05?Math.min(1,0.35+speed/8):0;
+ o.geometry.attributes.position.needsUpdate=true;const on=speed>0.05;
+ o.material.opacity=on?1:0;u.track.opacity=on?0.9:0.3;u.track.emissiveIntensity=on?0.6:0.15;
 }
 function box(w,h,d,c,x,y,z,o,cast){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),stdMat(c,o));m.position.set(x,y,z);m.castShadow=cast!==false;m.receiveShadow=true;scene.add(m);return m;}
 function cyl(rt,rb,h,c,x,y,z,o,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||24),stdMat(c,o));m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;}
@@ -1411,8 +1422,8 @@ function buildPV(){
   const led=new THREE.Mesh(new THREE.BoxGeometry(2.6,0.18,0.06),new THREE.MeshStandardMaterial({color:0x103018,emissive:0x44ff88,emissiveIntensity:1}));led.position.set(0,1.1,0.78);g.add(led);
   g.userData.led=led;scene.add(g);W.bat.push(g);}
  W.pvRays=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0xffd24a,transparent:true,opacity:.0,fog:false}));W.pvRays.geometry.setAttribute('position',dynAttr(12));W.pvRays.frustumCulled=false;scene.add(W.pvRays);
- W.pvFlow=makeFlow([[-15,0.5,-24],[-15,0.5,-37],[-8.4,0.5,-37]],16,0x6fa8ff,1.1);scene.add(W.pvFlow);
- W.pvFlow2=makeFlow([[-30,0.6,-12.5],[-30,0.6,-21.5],[-24,0.6,-21.5],[-21,0.6,-24]],10,0x6fa8ff,0.7);scene.add(W.pvFlow2);
+ W.pvFlow=makeFlow([[-15,0.5,-24],[-15,0.5,-37],[-8.4,0.5,-37]],16,0x1f6fff,1.1);scene.add(W.pvFlow);
+ W.pvFlow2=makeFlow([[-30,0.6,-12.5],[-30,0.6,-21.5],[-24,0.6,-21.5],[-21,0.6,-24]],10,0x1f6fff,0.8);scene.add(W.pvFlow2);
  thermometer(-37,-10,'pvTh');
 }
 function thermometer(x,z,key){
@@ -1449,12 +1460,12 @@ function buildCSP(){
  /* MED thermal desalination (aes offer): replaces the cooling fans, turns leftover steam into fresh water */
  W.med=[box(5,2.6,3.2,0x2e9e6a,38,1.3,-33,{metalness:.2,roughness:.6}),box(5.2,0.2,3.4,0xd8e2ea,38,2.7,-33,{metalness:.4}),
   cyl(1.3,1.3,3.2,0x2f9cff,43,1.6,-33,{metalness:.2,roughness:.3})];
- W.medFlow=makeFlow([[21,1,-24],[38,1,-24],[38,1,-31.4]],10,0x9fd8ff,0.9);scene.add(W.medFlow);
- W.medOut=makeFlow([[40.5,0.6,-33],[41.7,0.6,-33]],4,0x2f9cff,0.9);scene.add(W.medOut);
+ W.medFlow=makeFlow([[21,1,-24],[38,1,-24],[38,1,-31.4]],10,0x00a6d6,0.9);scene.add(W.medFlow);
+ W.medOut=makeFlow([[40.5,0.6,-33],[41.7,0.6,-33]],4,0x0077ff,0.9);scene.add(W.medOut);
  box(2.4,2,2.2,0x5d6b7a,28,1,-31.5,{metalness:.4});
- W.cspHeat=makeFlow([[8,0.6,-13.8],[28,0.6,-13.8],[28,0.6,-21],[15.5,0.6,-21],[14,0.6,-22.5]],22,0xff8a30,1.2);scene.add(W.cspHeat);
- W.cspHeat2=makeFlow([[14,1,-24],[22,6.2,-24],[33,6.2,-24]],12,0xff7a20,1.0);scene.add(W.cspHeat2);
- W.cspFlow=makeFlow([[28,0.5,-31.5],[28,0.5,-37],[8.4,0.5,-37]],16,0xffb060,1.1);scene.add(W.cspFlow);
+ W.cspHeat=makeFlow([[8,0.6,-13.8],[28,0.6,-13.8],[28,0.6,-21],[15.5,0.6,-21],[14,0.6,-22.5]],22,0xff5a00,1.2);scene.add(W.cspHeat);
+ W.cspHeat2=makeFlow([[14,1,-24],[22,6.2,-24],[33,6.2,-24]],12,0xe03a00,1.0);scene.add(W.cspHeat2);
+ W.cspFlow=makeFlow([[28,0.5,-31.5],[28,0.5,-37],[8.4,0.5,-37]],16,0xff9000,1.1);scene.add(W.cspFlow);
  /* pipes */
  const pipe=(a,b)=>{const L=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);const m=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.16,L,8),stdMat(0x5a6470,{metalness:.7}));m.position.set((a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2);
   m.lookAt(b[0],b[1],b[2]);m.rotateX(Math.PI/2);m.castShadow=true;scene.add(m);};
